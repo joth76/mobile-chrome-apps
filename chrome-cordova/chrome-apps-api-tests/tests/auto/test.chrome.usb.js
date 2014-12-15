@@ -73,25 +73,31 @@ registerAutoTests("chrome.usb", function() {
           expect(inEp.direction).toBe("in");
           expect(outEp.direction).toBe("out");
           chrome.usb.claimInterface(handle, iface.interfaceNumber, function() {
-            // Do a control transfer, just because.
+            // Do an 'IN' control transfer
             chrome.usb.controlTransfer(handle, {
-              direction: "out",
+              direction: "in",
               recipient: "interface",
               requestType: "standard",
-              request: 1,
-              value: 2,
-              index: 3,
-              data: new ArrayBuffer(2)
+              request: 66,
+              value: 77,
+              index: 88,
+              length: 10
             }, function(info) {
               expect(chrome.runtime.lastError).not.toBeDefined();
               expect(info.resultCode).toBeDefined();
               expect(info.resultCode).toBe(0);
+              expect(info.data).toBeDefined();
+              var r = new Uint8Array(info.data);
+              expect(r.length).toBe(3);
+              expect(r[0]).toBe(66);
+              expect(r[1]).toBe(77);
+              expect(r[2]).toBe(88);
             });
             // Do a pair of bulk transfers, asserting the payload is echoed.
             chrome.usb.bulkTransfer(handle, {
               direction: "out",
               endpoint: outEp.address,
-              data: (new Uint8Array([42, 43, 44])).buffer
+              data: (new Uint8Array([42, 43])).buffer
             }, function(outResult) {
               expect(chrome.runtime.lastError).not.toBeDefined();
               expect(outResult.resultCode).toBeDefined();
@@ -102,11 +108,12 @@ registerAutoTests("chrome.usb", function() {
                 length: 10
               }, function(inResult) {
                 expect(chrome.runtime.lastError).not.toBeDefined();
-                expect(outResult.resultCode).toBeDefined();
-                expect(outResult.resultCode).toBe(0);
+                expect(inResult.resultCode).toBeDefined();
+                expect(inResult.resultCode).toBe(0);
                 var r = new Uint8Array(inResult.data);
-                expect(r.length).toBe(3);
+                expect(r.length).toBe(2);
                 expect(r[0]).toBe(42);
+                expect(r[1]).toBe(43);
 
                 chrome.usb.closeDevice(handle);
                 done();

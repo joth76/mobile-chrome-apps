@@ -5,26 +5,19 @@
 package org.chromium;
 
 import java.io.IOException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.HashMap;
-import java.util.List;
 
 import org.apache.cordova.CallbackContext;
 import org.apache.cordova.CordovaArgs;
 import org.apache.cordova.CordovaPlugin;
-import org.apache.cordova.PluginResult;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
 import android.annotation.TargetApi;
-import android.app.PendingIntent;
 import android.content.Context;
-import android.content.Intent;
-import android.content.IntentFilter;
 import android.hardware.usb.UsbConstants;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbDeviceConnection;
@@ -33,11 +26,15 @@ import android.hardware.usb.UsbInterface;
 import android.hardware.usb.UsbManager;
 import android.os.Build;
 import android.util.Log;
-import android.util.Base64;
 
 @TargetApi(Build.VERSION_CODES.JELLY_BEAN)
 public class ChromeUsb extends CordovaPlugin {
     private static final String TAG = "ChromeUsb";
+
+    // Index of the 'params' object in CordovaArgs array passed in each action.
+    private static final int ARG_INDEX_PARAMS = 0;
+    // Index of the 'data' ArrayBuffer in CordovaArgs array passed in each action (where relevant).
+    private static final int ARG_INDEX_DATA_ARRAYBUFFER = 1;
 
     // An endpoint address is constructed from the interface index left-shifted this many bits,
     // or-ed with the endpoint index.
@@ -64,11 +61,9 @@ public class ChromeUsb extends CordovaPlugin {
     };
 
     // Maps connection handles to the corresponding device & connection objects.
-    private HashMap<Integer, ConnectedDevice> mConnections = new HashMap<Integer, ConnectedDevice>();
+    private HashMap<Integer, ConnectedDevice> mConnections =
+            new HashMap<Integer, ConnectedDevice>();
     private static int mNextConnectionId = 1;
-
-    // Thread pool to execute USB IO operations.
-    private final ExecutorService mExecutor = Executors.newSingleThreadExecutor();
 
     @Override
     public void onPause(boolean multitasking) {
@@ -98,15 +93,16 @@ public class ChromeUsb extends CordovaPlugin {
      * @throws JSONException if the args parsing fails
      */
     @Override
-    public boolean execute(String action, CordovaArgs args, final CallbackContext callbackContext) throws JSONException {
-        Log.d(TAG, "Action: " + action);
-        // By convention, the 0th positional parameter is always a params JSON object.
-        JSONObject params = args.getJSONObject(0);
+    public boolean execute(String action, CordovaArgs args, final CallbackContext callbackContext)
+            throws JSONException {
+        JSONObject params = args.getJSONObject(ARG_INDEX_PARAMS);
+        Log.d(TAG, "Action: " + action + " params: " + params);
 
         if (mUsbManager == null) {
             mUsbManager = (UsbManager) webView.getContext().getSystemService(Context.USB_SERVICE);
         }
 
+        // TODO: Process commands asynchronously on a worker pool thread.
         try {
             if ("getDevices".equals(action)) {
                 getDevices(args, params, callbackContext);
@@ -140,7 +136,8 @@ public class ChromeUsb extends CordovaPlugin {
         return false;
     }
 
-    private void getDevices(CordovaArgs args, JSONObject params, final CallbackContext callbackContext) throws JSONException, UsbError {
+    private void getDevices(CordovaArgs args, JSONObject params,
+            final CallbackContext callbackContext) throws JSONException, UsbError {
         HashMap<String, UsbDevice> devices = mUsbManager.getDeviceList();
         JSONArray result = new JSONArray();
         for (UsbDevice device: devices.values()) {
@@ -152,8 +149,8 @@ public class ChromeUsb extends CordovaPlugin {
         }
         callbackContext.success(result);
     }
-    private static void addDeviceToArray(JSONArray result, int deviceId, int vendorId, int productId)
-            throws JSONException {
+    private static void addDeviceToArray(JSONArray result, int deviceId, int vendorId,
+            int productId) throws JSONException {
         JSONObject jsonDev = new JSONObject();
         jsonDev.put("device", deviceId);
         jsonDev.put("vendorId", vendorId);
@@ -161,7 +158,8 @@ public class ChromeUsb extends CordovaPlugin {
         result.put(jsonDev);
     }
 
-    private void openDevice(CordovaArgs args, JSONObject params, final CallbackContext callbackContext) throws JSONException, UsbError {
+    private void openDevice(CordovaArgs args, JSONObject params,
+            final CallbackContext callbackContext) throws JSONException, UsbError {
         // First recover the device object from Id.
         int devId = params.getInt("device");
         ConnectedDevice dev = null;
@@ -177,7 +175,7 @@ public class ChromeUsb extends CordovaPlugin {
             }
             if (usbDev != null) {
                 if (!mUsbManager.hasPermission(usbDev)) {
-                    // TODO(joth): Implement dynamic permission request.
+                    // TODO: Implement dynamic permission request.
                     throw new UsbError("Permission request not yet implemented");
                 }
                 UsbDeviceConnection usbConn = mUsbManager.openDevice(usbDev);
@@ -205,7 +203,8 @@ public class ChromeUsb extends CordovaPlugin {
         callbackContext.success(jsonHandle);
     }
 
-    private void closeDevice(CordovaArgs args, JSONObject params, final CallbackContext callbackContext) throws JSONException, UsbError {
+    private void closeDevice(CordovaArgs args, JSONObject params,
+            final CallbackContext callbackContext) throws JSONException, UsbError {
         int handle = params.getInt("handle");
         ConnectedDevice d = mConnections.remove(handle);
         if (d != null) {
@@ -214,7 +213,8 @@ public class ChromeUsb extends CordovaPlugin {
         callbackContext.success();
     }
 
-    private void listInterfaces(CordovaArgs args, JSONObject params, final CallbackContext callbackContext) throws JSONException, UsbError {
+    private void listInterfaces(CordovaArgs args, JSONObject params,
+            final CallbackContext callbackContext) throws JSONException, UsbError {
         ConnectedDevice dev = getDevice(params);
         JSONArray jsonInterfaces = new JSONArray();
         int interfaceCount = dev.getInterfaceCount();
@@ -242,7 +242,8 @@ public class ChromeUsb extends CordovaPlugin {
         callbackContext.success(jsonInterfaces);
     }
 
-    private void claimInterface(CordovaArgs args, JSONObject params, final CallbackContext callbackContext) throws JSONException, UsbError {
+    private void claimInterface(CordovaArgs args, JSONObject params,
+            final CallbackContext callbackContext) throws JSONException, UsbError {
         ConnectedDevice dev = getDevice(params);
         int interfaceNumber = getInterfaceNumber(params, dev);
         if (!dev.claimInterface(interfaceNumber)) {
@@ -251,7 +252,8 @@ public class ChromeUsb extends CordovaPlugin {
         callbackContext.success();
     }
 
-    private void releaseInterface(CordovaArgs args, JSONObject params, final CallbackContext callbackContext) throws JSONException, UsbError {
+    private void releaseInterface(CordovaArgs args, JSONObject params,
+            final CallbackContext callbackContext) throws JSONException, UsbError {
         ConnectedDevice dev = getDevice(params);
         int interfaceNumber = getInterfaceNumber(params, dev);
         if (!dev.releaseInterface(interfaceNumber)) {
@@ -260,9 +262,10 @@ public class ChromeUsb extends CordovaPlugin {
         callbackContext.success();
     }
 
-    private void controlTransfer(CordovaArgs args, JSONObject params, final CallbackContext callbackContext) throws JSONException, UsbError {
+    private void controlTransfer(CordovaArgs args, JSONObject params,
+            final CallbackContext callbackContext) throws JSONException, UsbError {
         ConnectedDevice dev = getDevice(params);
-        // TODO(joth): check direction, recipient, requestType, data and length.
+        // TODO: Ignoring the chrome.usb 'recipient' field. How does this map to the Android API?
         int direction = directionFromName(params.getString("direction"));
         byte[] buffer = getByteBufferForTransfer(args, params, direction);
 
@@ -283,7 +286,8 @@ public class ChromeUsb extends CordovaPlugin {
         }
     }
 
-    private void bulkTransfer(CordovaArgs args, JSONObject params, final CallbackContext callbackContext) throws JSONException, UsbError {
+    private void bulkTransfer(CordovaArgs args, JSONObject params,
+            final CallbackContext callbackContext) throws JSONException, UsbError {
         ConnectedDevice dev = getDevice(params);
         int endpointAddress = params.getInt("endpoint");
         int interfaceNumber = endpointAddress >> ENDPOINT_IF_SHIFT;
@@ -331,6 +335,9 @@ public class ChromeUsb extends CordovaPlugin {
         }
     }
 
+    // Concrete subclass of ConnectedDevice that routes calls through to the real Android APIs.
+    // The implementation of this class is by design very minimalist: if the methods are kept free
+    // of logic/control statements as the test strategy (see FakeDevice) does not cover this class.
     private static class RealDevice extends ConnectedDevice {
         RealDevice(UsbDevice device, UsbDeviceConnection connection) {
             mDevice = device;
@@ -369,7 +376,7 @@ public class ChromeUsb extends CordovaPlugin {
         }
         int controlTransfer(int requestType, int request, int value, int index, byte[] buffer) {
             return mConnection.controlTransfer(requestType, request, value, index,
-                    buffer, buffer == null ? 0 : buffer.length, 0);
+                    buffer, buffer.length, 0);
         }
         int bulkTransfer(int interfaceNumber, int endpointNumber, int direction, byte[] buffer)
                 throws UsbError {
@@ -421,7 +428,14 @@ public class ChromeUsb extends CordovaPlugin {
             return true;
         }
         int controlTransfer(int requestType, int request, int value, int index, byte[] buffer) {
-            return 0;
+            if ((requestType & UsbConstants.USB_ENDPOINT_DIR_MASK) == UsbConstants.USB_DIR_IN) {
+                // For an 'IN' transfer, reflect params into the response data.
+                buffer[0] = (byte)request;
+                buffer[1] = (byte)value;
+                buffer[2] = (byte)index;
+                return 3;
+            }
+            return buffer.length;
         }
         int bulkTransfer(int interfaceNumber, int endpointNumber, int direction, byte[] buffer)
                 throws UsbError {
@@ -489,11 +503,11 @@ public class ChromeUsb extends CordovaPlugin {
     private static byte[] getByteBufferForTransfer(CordovaArgs args, JSONObject params,
             int direction) throws JSONException {
         if (direction == UsbConstants.USB_DIR_OUT) {
-            // OUT transfer requires data param.
-            return args.getArrayBuffer(1);
+            // OUT transfer requires data positional argument.
+            return args.getArrayBuffer(ARG_INDEX_DATA_ARRAYBUFFER);
         } else {
-            // IN transfer requires a length to receive.
-            return new byte[params.getInt("length")];
+            // IN transfer requires client to pass the length to receive.
+            return new byte[params.optInt("length")];
         }
     }
 
